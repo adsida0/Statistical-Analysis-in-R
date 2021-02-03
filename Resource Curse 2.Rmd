@@ -1,0 +1,610 @@
+---
+title: "Resource Curse Analysis"
+output: html_document
+---
+#### Andrew Dsida (ad3678)
+#### Quality of Life for Resource Rich Countries
+
+### Setting up libaries
+
+### Importing World Bank datasets
+
+```{r}
+library(readr)
+library(tidyverse)
+library(reshape2)
+library(devtools)
+library(QMSS)
+library(lmtest)
+library(dplyr)
+library(gmodels)
+library(plm)
+library(xtable)
+library(plyr)
+library(AER)
+library(car)
+library(robustbase)
+library(sandwich)
+library(stargazer)
+library(broom)
+
+######  Load basic demographic info
+
+country_region <- read_csv("country.csv")
+
+rr <- country_region [, c("TableName", "Region", "IncomeGroup")]
+
+colnames(rr)[colnames(rr)=="TableName"] <- "country"
+
+all_indicators <- read_csv("Indicators.csv")
+all_indicators[0:5,]
+colnames(all_indicators)[colnames(all_indicators)=="Year"] <- "year"
+colnames(all_indicators)[colnames(all_indicators)=="CountryName"] <- "country"
+
+###### Used Kaggle function (later in code) to list out all of the possible indicators.  The list below are the ones I decided to keep--although ultimately all were not used
+
+variables_of_interest <- c("AG.LND.TOTL.K2", "BN.CAB.XOKA.GD.ZS", "BX.KLT.DINV.WD.GD.ZS", "CM.MKT.LDOM.NO", "CM.MKT.LCAP.GD.ZS", "DT.DOD.PVLX.GN.ZS", "EG.ELC.RNEW.ZS", "EG.ELC.ACCS.ZS", "EN.ATM.CO2E.PP.GD", "EN.ATM.PM25.MC.M3", "FP.CPI.TOTL", "FP.CPI.TOTL.ZG", "GC.DOD.TOTL.GD.ZS", "IC.BUS.EASE.XQ", "IC.BUS.NDNS.ZS","IP.JRN.ARTC.SC","IP.TMK.TOTL", "MS.MIL.XPND.ZS", "NY.GDP.MKTP.CD", "NY.GDP.MKTP.KD.ZG", "NY.GDP.PCAP.CD", "SE.SEC.CMPT.LO.ZS", "SE.PRM.NENR", "SH.DTH.IMRT", "SH.XPD.PUBL.ZS", "SI.POV.GINI", "SI.DST.FRST.20", "SI.DST.05TH.20", "SL.TLF.TERT.ZS", "SN.ITK.DEFC.ZS", "SP.DYN.LE00.IN", "SP.POP.TOTL", "SP.URB.TOTL.IN.ZS", "VC.IHR.PSRC.P5")
+
+indicators2 <- all_indicators %>% filter(IndicatorCode %in% variables_of_interest)
+indicators3 <- indicators2[c(-2, -4)]
+indicators4 <- dcast(indicators3, country + year ~ IndicatorName)
+indicators5 <- subset(indicators4, year >= 1990 & year <= 2010)
+indicators5$year = as.integer(as.character(indicators5$year))
+
+###### Loading foreign aid from World Bank site and cleaning it up
+
+foreign_aid <-read_csv("foreign_aid.csv")
+foreign_aid_columns <- foreign_aid %>% gather(key = year, value = Foreign_Aid, '1960':'2010')
+foreign_aid_columns <- subset(foreign_aid_columns, year >= 1990 & year <= 2010)
+foreign_aid_columns$year = as.integer(as.character(foreign_aid_columns$year))
+#View(foreign_aid_columns)
+
+### Combining clean version of main indicators plus the foreign aid info
+
+indicators6 <- left_join(indicators5, foreign_aid_columns, by = c("country", "year"))
+```
+
+### Importing energy datasets
+```{r}
+######   Load energy info, mostly from IEA energy data set, but supplemented with total production numbers from Enerdata (https://yearbook.enerdata.net/total-energy/world-consumption-statistics.html) for some developing nations not covered by IEA
+IEA_total <- read_csv("IEA_data2.csv")
+
+#####  Creating a tidy data set wit the energy data
+
+IEA_total2 <- subset(IEA_total, Product == "Total")
+
+IEA_total3 <- IEA_total2 %>% gather(key = year, value = ktoe, '1971':'2017')
+
+IEA_total4 <- subset(IEA_total3, year >= 1990 & year <= 2010)
+
+colnames(IEA_total4)[colnames(IEA_total4)=="Country"] <- "country"
+colnames(IEA_total4)[colnames(IEA_total4)=="ktoe"] <- "value"
+IEA_total4$year = as.integer(as.character(IEA_total4$year))
+IEA_total4$value = as.numeric(as.numeric(IEA_total4$value))
+
+IEA5 <- IEA_total4[-2]
+
+IEA6 <- subset(IEA5, Flow == "Production (ktoe)" | Flow == "Imports (ktoe)" | Flow == "Exports (ktoe)")
+
+IEA7 <- dcast(IEA6, country + year ~ Flow)
+```
+
+#### Importing World Happiness data
+```{r}
+###### Loading happiness indicator data from 2015 UN World Happiness Report
+happy_total <- read_csv("happiness_data.csv")
+#View(happy_total)
+happy_total$year = as.integer(as.character(happy_total$year))
+
+```
+
+#### Importing percentage Muslim from Pew Research
+```{r}
+percent_muslim <- read_csv("Percent_Muslim.csv")
+muslim <- percent_muslim[,1:2]
+
+```
+#### Importing regional oil rent (World Bank) and geographic (shale basin) data (www.arcgis.com)
+```{r}
+regional_rent_basin <-read_csv('regional_rent_basin.csv')
+
+```
+### Importing and trimming democracy index file
+```{r}
+democracy <- read_csv('democracy_index.csv')
+colnames(democracy)[colnames(democracy)=="X1"] <- "country"
+democracy$country <- str_trim(democracy$country, side = "left")
+```
+
+
+
+
+### Merging individual data sets
+```{r}
+##### Combining Energy data, demographic info, happiness info into one big, happy, dataset!
+
+Energy <- merge(x = rr,  y = indicators6, by = "country", all = TRUE) %>% merge(., IEA7, by = c("country", "year"), all = TRUE) %>% merge (., happy_total, by = c("country", "year"), all = TRUE)
+
+colnames(Energy)[colnames(Energy)=="Production (ktoe)"] <- "total_production"
+colnames(Energy)[colnames(Energy)=="Population, total"] <- "population"
+Energy$per_en <- with(Energy, total_production/population)
+
+#  Energy rich country list, taken selectively from Haber and Menaldo
+
+energy_rich_countries = c("Nigeria", "Venezuela", "Norway", "Saudi Arabia", "Equatorial Guinea", "Ecuador", "Netherlands", "Papua New Guinea", "Trinidad and Tobago", "Mexico", "Mongolia", "Russia", "Algeria", "Angola", "Iran", "Krygzstan", "Azerbaijan", "Niger", "Tunisia", "Ukraine", "Bahrain", "Gabon", "Kazakhstan", "Kuwait", "Libya", "Morocco", "Oman", "Qatar", "Turkmenistan", "United Arab Emirates", "Vietnam", "Yemen")
+
+Energy$res_rich <- ifelse(Energy$country %in% energy_rich_countries, 1, 0)
+
+## Note: Per suggestion from advisor, "res_rich" variable will be referenced as "energy_dependence" in paper
+```
+
+### Exporting combined file for manual cleanup
+#### Then for additional cleanup in R
+```{r}
+## Sending dataset out for manual cleanup and observation
+#write.csv(Energy,"energy.csv", row.names = FALSE)
+
+## Bringing it back in
+en <- read_csv('energy_clean.csv')
+
+## Fields that need to be altered to provide a more consistent scale for analysis
+en$pop <- log(en$population)
+en$area <- log(en$`Land area (sq. km)`)
+en$infant_mortality <- en$`Number of infant deaths` / (en$population / 1000000)
+en$gdp <- log(en$`GDP at market prices (current US$)`)
+en$gdp_per <- log(en$`GDP per capita (current US$)`)
+
+
+### merge with percentage Muslim
+en_1a <- merge(x = en,  y = muslim, by = "country", all = TRUE)
+
+### merge with regional oil rent and basin coverage data
+en_1b <- merge(x = en_1a,  y = regional_rent_basin, by = "Region", all = TRUE) 
+### filter for year 2010 o
+en_2 <- en_1b %>% filter(year == 2010)
+
+### calculating mean growth and adding it to 2010 dataframe
+en_2$mean_growth <- ddply(en, .(country), summarize,  avg_growth = mean(`GDP growth (annual %)`, na.rm = TRUE))
+xxx <-  ddply(en, .(country), summarize,  avg_growth = mean(`GDP growth (annual %)`, na.rm = TRUE))
+
+### merge with democracy index and add average growth field
+en_2010 <- merge(x = en_2,  y = democracy, by = "country", all = TRUE) %>% merge(., xxx, by = "country", all = TRUE)
+
+#### saving file for submission; future work (this is the principal aggregated data file used for analysis)
+#write.csv(en_2010,"en_2010.csv", row.names = FALSE)
+#write.csv(en_1990, "en_1990.csv", row.names = FALSE)
+```
+
+### Summary means and standard deviations for variables
+```{r}
+#  Summarizing statistics for variables
+
+sapply(Filter(is.numeric, en_2010), mean, na.rm = TRUE)
+sapply(Filter(is.numeric, en_2010), sd, na.rm = TRUE)
+
+CrossTable(en_2010$res_rich, en_2010$Region, prop.c=TRUE, format = "SAS")
+CrossTable(en_2010$res_rich, en_2010$IncomeGroup, prop.c=TRUE, format = "SAS")
+
+### finding means for resource rich countries vs others
+rich <- filter(en_2010, res_rich == "1")
+poor <- filter(en_2010, res_rich == "0")
+
+mean(rich$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+mean(poor$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+
+mean(rich$infant_mortality, na.rm = TRUE)
+mean(poor$infant_mortality, na.rm = TRUE)
+
+mean(rich$`Access to electricity (% of population)`, na.rm = TRUE)
+mean(poor$`Access to electricity (% of population)`, na.rm = TRUE)
+
+mean(rich$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+mean(poor$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+
+mean(rich$`Happiness Score`, na.rm = TRUE)
+mean(poor$`Happiness Score`, na.rm = TRUE)
+
+mean(rich$`Political participation`, na.rm = TRUE)
+mean(poor$`Political participation`, na.rm = TRUE)
+
+mean(rich$`Civil liberties`, na.rm = TRUE)
+mean(poor$`Civil liberties`, na.rm = TRUE)
+
+```
+
+### Running basic regressions
+```{r}
+#### running basic OLS regressions on resource rich dummy variable without controls
+
+life1 <- lmrob(formula = en_2010$`Life expectancy at birth, total (years)` ~ res_rich, data = en_2010)
+
+infant1 <- lmrob(formula = en_2010$infant_mortality ~ res_rich, data = en_2010)
+
+electric1 <- lmrob(formula = en_2010$`Access to electricity (% of population)` ~ res_rich, data = en_2010)
+
+educ1 <- lmrob(formula = en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich, data = en_2010)
+
+happy1 <- lmrob(formula = en_2010$`Happiness Score` ~ res_rich, data = en_2010)
+
+part1 <- lmrob(formula = en_2010$`Political participation` ~ res_rich, data = en_2010)
+  
+civil1 <- lmrob(formula = en_2010$`Civil liberties` ~ res_rich, data = en_2010)
+
+```
+
+### Running models with regional effects
+```{r}
+#### running basic OLS regressions on resource rich dummy variable with Region as a control
+
+life2 <- lmrob(formula = en_2010$`Life expectancy at birth, total (years)` ~ res_rich + Region, data = en_2010)
+
+infant2 <- lm(formula = en_2010$infant_mortality ~ res_rich + Region, data = en_2010, na.action = na.exclude)
+
+electric2 <- lmrob(formula = en_2010$`Access to electricity (% of population)` ~ res_rich + Region, data = en_2010)
+
+educ2 <- lmrob(formula = en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + Region, data = en_2010)
+
+happy2 <- lmrob(formula = en_2010$`Happiness Score` ~ res_rich + Region, data = en_2010)
+
+part2 <- lmrob(formula = en_2010$`Political participation` ~ res_rich + Region, data = en_2010)
+
+civil2 <- lmrob(formula = en_2010$`Civil liberties` ~ res_rich + Region, data = en_2010)
+```
+
+### Models with regional and country fixed effects
+```{r}
+## Running models with res_rich, Region and several other country-specific independent variables
+
+life3 <- lmrob(formula = en_2010$`Life expectancy at birth, total (years)` ~ res_rich + Region  + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+infant3 <- lmrob(formula = en_2010$infant_mortality ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+electric3 <- lm(formula = en_2010$`Access to electricity (% of population)` ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+educ3 <- lmrob(formula = en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+happy3 <- lmrob(formula = en_2010$`Happiness Score` ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+part3 <- lm(formula = en_2010$`Political participation` ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+civil3 <- lmrob(formula = en_2010$`Civil liberties` ~ res_rich + Region + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010, na.action = na.exclude)
+
+```
+
+### Models with interactive effects
+```{r}
+## Modeling with single control of Region * Income Group
+
+life4 <- lm(en_2010$`Life expectancy at birth, total (years)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+infant4 <- lmrob(en_2010$infant_mortality ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+electric4 <- lmrob(en_2010$`Access to electricity (% of population)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+educ4 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+happy4 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+part4 <- lmrob(en_2010$`Political participation` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+civil4 <- lmrob(en_2010$`Civil liberties` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+```
+
+### Models with interactive effects, using WLS (population proportion)
+```{r}
+
+life5 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+infant5 <- lmrob(en_2010$infant_mortality ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+electric5 <- lmrob(en_2010$`Access to electricity (% of population)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+educ5 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+happy5 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+part5 <- lmrob(en_2010$`Political participation` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+civil5 <- lmrob(en_2010$`Civil liberties` ~ res_rich + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+```
+
+### Instrumental Variable analysis using basin coverage as an instrument
+```{r}
+### 1st Stage -- res_rich regressed against sedimentary basin coverage (average per continent) + regional and income controls
+
+first_stage <- lm(en_2010$res_rich ~ en_2010$regional_basin_coverage, data = en_2010, na.action = na.exclude)
+
+rent_basin <- lm(regional_oil_rent ~ regional_basin_coverage, data = en_2010, na.acton = na.exclude)  ### another measure of appropriateness of the instrument
+
+### IV regression -- Dependent (Y) variables regressed against basin coverage + regional and income controls
+
+#iv_region <- ivreg(data = en_2010, en_2010$`Democracy index` ~ en_2010$res_rich + en_2010$`Access to electricity (% of population)` + en_2010$gdp_per + en_2010$pop + en_2010$`Urban population (% of total)` | en_2010$Region + en_2010$`Access to electricity (% of population)` + en_2010$gdp_per + en_2010$pop + en_2010$`Urban population (% of total)`) 
+
+life6 <- ivreg(formula = en_2010$`Life expectancy at birth, total (years)` ~ res_rich  + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+summary(life6, diagnositics = TRUE)
+
+infant6 <- ivreg(en_2010$infant_mortality ~ res_rich + + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+electric6 <- ivreg(en_2010$`Access to electricity (% of population)` ~ res_rich + + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+educ6 <- ivreg(en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+happy6 <- ivreg(en_2010$`Life expectancy at birth, total (years)` ~ res_rich+ en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim  | regional_basin_coverage + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+part6 <- ivreg(en_2010$`Political participation` ~ res_rich + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+civil6 <- ivreg(en_2010$`Civil liberties` ~ res_rich + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim | regional_basin_coverage + en_2010$gdp_per + en_2010$`GINI index (World Bank estimate)`  +  en_2010$area +  + en_2010$pop  + en_2010$`Urban population (% of total)` + en_2010$Percent_Muslim, data = en_2010)
+
+# summary(life6, vcov = sandwich, df = Inf, diagnostics = TRUE) 
+# summary(electric6, vcov = sandwich, df = Inf, diagnostics = TRUE) ...
+
+```
+
+### Doing all 20 years of observations (did not use in paper)
+```{r}
+life8 <- plm(formula = en$`Life expectancy at birth, total (years)` ~ res_rich + Region, data = en, na.action = na.exclude, model = "pooling")
+
+infant8 <- plm(formula = en$infant_mortality ~ res_rich + Region, data = en, na.action = na.exclude, model = "pooling")
+
+electric8 <- plm(formula = en$`Access to electricity (% of population)` ~ res_rich + Region, data = en, na.action = na.exclude, model = "pooling")
+
+educ8 <- plm(formula = en$`Lower secondary completion rate, both sexes (%)` ~ res_rich + Region, data = en, na.action = na.exclude, model = "pooling")
+```
+
+
+### Looking at Income effects and differences 
+```{r}
+life9 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ res_rich + en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+infant9 <- lmrob(en_2010$infant_mortality ~ res_rich + en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+electric9 <- lmrob(en_2010$`Access to electricity (% of population)` ~ res_rich + en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+educ9 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ res_rich + en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+happy9 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ res_rich +  en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+part9 <- lmrob(en_2010$`Political participation` ~ res_rich +  en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+civil9 <- lmrob(en_2010$`Civil liberties` ~ res_rich +  en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+mean(rich$avg_growth, na.rm = TRUE)
+mean(poor$avg_growth, na.rm = TRUE)
+
+mean(rich$`GDP per capita (current US$)`, na.rm = TRUE)
+mean(poor$`GDP per capita (current US$)`, na.rm = TRUE)
+
+median(rich$`GDP per capita (current US$)`, na.rm = TRUE)
+median(poor$`GDP per capita (current US$)`, na.rm = TRUE)
+
+```
+### Checking against intensity of resource production (energy production / GDP)
+```{r}
+en_2010$`Energy Intensity` <- en_2010$total_production / en_2010$gdp
+
+life11 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+infant11 <- lmrob(en_2010$infant_mortality ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+electric11 <- lm(en_2010$`Access to electricity (% of population)` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+educ11 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+happy11 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+part11 <- lmrob(en_2010$`Political participation` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+civil11 <- lmrob(en_2010$`Civil liberties` ~ en_2010$`Energy Intensity`, data = en_2010, na.action = na.exclude)
+
+
+life12 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+infant12 <- lmrob(en_2010$infant_mortality ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+electric12 <- lm(en_2010$`Access to electricity (% of population)` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+educ12 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+happy12 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+part12 <- lmrob(en_2010$`Political participation` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+civil12 <- lmrob(en_2010$`Civil liberties` ~ en_2010$`Energy Intensity` + en_2010$Region, data = en_2010, na.action = na.exclude)
+
+
+
+life14 <- lm(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+infant14 <- lmrob(en_2010$infant_mortality ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+electric14 <- lm(en_2010$`Access to electricity (% of population)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+educ14 <- lm(en_2010$`Lower secondary completion rate, both sexes (%)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+happy14 <- lm(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+part14 <- lm(en_2010$`Political participation` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+civil14 <- lm(en_2010$`Civil liberties` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude)
+
+
+life15 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+infant15 <- lmrob(en_2010$infant_mortality ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+electric15 <- lm(en_2010$`Access to electricity (% of population)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+educ15 <- lmrob(en_2010$`Lower secondary completion rate, both sexes (%)` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+happy15 <- lmrob(en_2010$`Life expectancy at birth, total (years)` ~en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+part15 <- lm(en_2010$`Political participation` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+civil15 <- lmrob(en_2010$`Civil liberties` ~ en_2010$`Energy Intensity` + en_2010$Region * en_2010$IncomeGroup, data = en_2010, na.action = na.exclude, weights = en_2010$pop)
+
+```
+
+### First Differeces analysis (1990 vs 2010)
+
+```{r}
+### create 1990 data set and adjust which countries are considered resource rich (for 1st differences analysis)
+en_2010_panel <- en_1b %>% filter(year == 2010)
+en_1990 <- en_1b %>% filter(year == 1990)
+
+energy_rich_countries_1990 = c("Nigeria", "Venezuela", "Norway", "Saudi Arabia", "Ecuador", "Netherlands", "Trinidad and Tobago", "Mexico", "Russia", "Algeria", "Angola", "Iran", "Azerbaijan", "Niger", "Tunisia", "Ukraine", "Bahrain", "Gabon", "Kazakhstan", "Kuwait", "Libya", "Morocco", "Oman", "Qatar", "United Arab Emirates")
+### Countries not included in 1990 that were in 2010:  Equatorial Guinea, Papua New Guinea, Mongolia, Krygzstan, Turkmenistan, Vietnam, Yemen
+
+### Set res_rich for 1990 countries based on truncated country list
+en_1990$res_rich <- ifelse(en_1990$country %in% energy_rich_countries_1990, 1, 0)
+
+### Merge 1990 and 2010 panels
+en_diff_panel <- rbind(en_2010_panel, en_1990)
+
+### Run 1st difference for dependent variables (1990 vs 2010)
+
+life16 <- plm(en_diff_panel$`Life expectancy at birth, total (years)` ~ res_rich + Region * IncomeGroup + year - 1, index =  c("country", "year"), data = en_diff_panel, na.action = na.exclude, model = "fd")
+
+infant16 <- plm(en_diff_panel$infant_mortality ~ res_rich + Region * IncomeGroup + year - 1, index =  c("country", "year"), data = en_diff_panel, na.action = na.exclude, model = "fd")
+
+electric16 <- plm(en_diff_panel$`Access to electricity (% of population)` ~ res_rich + Region * IncomeGroup + year - 1, index =  c("country", "year"), data = en_diff_panel, na.action = na.exclude, model = "fd")
+
+educ16 <- plm(en_diff_panel$`Lower secondary completion rate, both sexes (%)` ~ res_rich + Region * IncomeGroup + year - 1, index =  c("country", "year"), data = en_diff_panel, na.action = na.exclude, model = "fd")
+
+```
+
+
+### Looking at list of all World Bank Indicators
+
+Function from Kaggle site to itemize the possible measurements available in the dataset.  I used this to create a reduced list of variables of interest.
+
+```{r}
+#library.warn <- library
+#library <- function(package, help, pos = 2, lib.loc = NULL, character.only = FALSE,
+ # logical.return = FALSE, warn.conflicts = TRUE, quietly = FALSE,
+  #verbose = getOption("verbose")) {
+ # if (!character.only) {
+  #  package <- as.character(substitute(package))
+#  }
+
+ # suppressPackageStartupMessages(library.warn(
+  #  package, help, pos, lib.loc, character.only = TRUE,
+   # logical.return, warn.conflicts, quietly, verbose))}
+#library(xtable)
+#print.table <- function(table) {
+#  html <- print(xtable(table), type="html", print.results=FALSE, include.rownames=FALSE)
+ # cat(paste0("<div style='width:800; overflow:auto; border-width: 2;'><style>td {padding: 3px;} th {padding: 3px;}</style>", html, "</div>"))
+#}
+#{r results="asis"}
+#library(dplyr)
+#library(readr)
+
+#indicators <- all_indicators
+
+#counts <- indicators %>%
+  #group_by(IndicatorCode, IndicatorName) %>%
+  #summarise(NumCountries = n_distinct(country),
+   #         NumYears     = n_distinct(year),
+    #        FirstYear    = min(year),
+    #       LastYear     = max(year))
+
+# Note - $ being replaced with dollar to avoid MathJax issue
+#counts$IndicatorName <- gsub("\\$", "dollar", counts$IndicatorName)
+
+#View(counts)
+
+```
+```{r}
+### Means, standard deviations and t-tests for variables used in models
+
+mean(rich$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+sd(rich$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+mean(rich$infant_mortality, na.rm = TRUE)
+sd(rich$infant_mortality, na.rm = TRUE)
+mean(rich$`Access to electricity (% of population)`, na.rm = TRUE)
+sd(rich$`Access to electricity (% of population)`, na.rm = TRUE)
+mean(rich$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+sd(rich$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+
+mean(poor$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+sd(poor$`Life expectancy at birth, total (years)`, na.rm = TRUE)
+mean(poor$infant_mortality, na.rm = TRUE)
+sd(poor$infant_mortality, na.rm = TRUE)
+mean(poor$`Access to electricity (% of population)`, na.rm = TRUE)
+sd(poor$`Access to electricity (% of population)`, na.rm = TRUE)
+mean(poor$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+sd(poor$`Lower secondary completion rate, both sexes (%)`, na.rm = TRUE)
+
+mean(rich$`Happiness Score`, na.rm = TRUE)
+sd(rich$`Happiness Score`, na.rm = TRUE)
+mean(rich$`Political participation`, na.rm = TRUE)
+sd(rich$`Political participation`, na.rm = TRUE)
+mean(rich$`Civil liberties`, na.rm = TRUE)
+sd(rich$`Civil liberties`, na.rm = TRUE)
+
+mean(poor$`Happiness Score`, na.rm = TRUE)
+sd(poor$`Happiness Score`, na.rm = TRUE)
+mean(poor$`Political participation`, na.rm = TRUE)
+sd(poor$`Political participation`, na.rm = TRUE)
+mean(poor$`Civil liberties`, na.rm = TRUE)
+sd(poor$`Civil liberties`, na.rm = TRUE)
+
+t.test(rich$`Life expectancy at birth, total (years)`,poor$`Life expectancy at birth, total (years)`)
+t.test(rich$infant_mortality, poor$infant_mortality)
+t.test(rich$`Access to electricity (% of population)`,poor$`Access to electricity (% of population)`)
+t.test(rich$`Lower secondary completion rate, both sexes (%)`, poor$`Lower secondary completion rate, both sexes (%)`)
+
+t.test(rich$`Happiness Score`,poor$`Happiness Score`)
+t.test(rich$`Political participation`,poor$`Political participation`)
+t.test(rich$`Civil liberties`,poor$`Civil liberties`)
+
+mean(en_2010$gdp_per, na.rm = TRUE)
+sd(en_2010$gdp_per, na.rm = TRUE)
+mean(rich$gdp_per, na.rm = TRUE)
+sd(rich$gdp_per, na.rm = TRUE)
+mean(poor$gdp_per, na.rm = TRUE)
+sd(poor$gdp_per, na.rm = TRUE)
+t.test(rich$gdp_per, poor$gdp_per)
+
+mean(en_2010$`GINI index (World Bank estimate)`, na.rm = TRUE)
+sd(en_2010$`GINI index (World Bank estimate)`, na.rm = TRUE)
+mean(rich$`GINI index (World Bank estimate)`, na.rm = TRUE)
+sd(rich$`GINI index (World Bank estimate)`, na.rm = TRUE)
+mean(poor$`GINI index (World Bank estimate)`, na.rm = TRUE)
+sd(poor$`GINI index (World Bank estimate)`, na.rm = TRUE)
+t.test(rich$`GINI index (World Bank estimate)`, poor$`GINI index (World Bank estimate)`)
+
+mean(en_2010$area, na.rm = TRUE)
+sd(en_2010$area, na.rm = TRUE)
+mean(rich$area, na.rm = TRUE)
+sd(rich$area, na.rm = TRUE)
+mean(poor$area, na.rm = TRUE)
+sd(poor$area, na.rm = TRUE)
+t.test(rich$area, poor$area)
+
+mean(en_2010$pop, na.rm = TRUE)
+sd(en_2010$pop, na.rm = TRUE)
+mean(rich$pop, na.rm = TRUE)
+sd(rich$pop, na.rm = TRUE)
+mean(poor$pop, na.rm = TRUE)
+sd(poor$pop, na.rm = TRUE)
+t.test(rich$pop, poor$pop)
+
+mean(en_2010$`Urban population (% of total)`, na.rm = TRUE)
+sd(en_2010$`Urban population (% of total)`, na.rm = TRUE)
+mean(rich$`Urban population (% of total)`, na.rm = TRUE)
+sd(rich$`Urban population (% of total)`, na.rm = TRUE)
+mean(poor$`Urban population (% of total)`, na.rm = TRUE)
+sd(poor$`Urban population (% of total)`, na.rm = TRUE)
+t.test(rich$`Urban population (% of total)`, poor$`Urban population (% of total)`)
+
+mean(en_2010$Percent_Muslim, na.rm = TRUE)
+sd(en_2010$Percent_Muslim, na.rm = TRUE)
+mean(rich$Percent_Muslim, na.rm = TRUE)
+sd(rich$Percent_Muslim, na.rm = TRUE)
+mean(poor$Percent_Muslim, na.rm = TRUE)
+sd(poor$Percent_Muslim, na.rm = TRUE)
+t.test(rich$Percent_Muslim, poor$Percent_Muslim)
+
+```
+
+

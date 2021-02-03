@@ -1,0 +1,202 @@
+---
+title: "Sociology - Inequality Attitudes Between Countries"
+output: html_notebook
+---
+
+. 
+### Load libraries and data file
+```{r}
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(xtable)
+
+wvs_full <- readRDS('WVS_Wave6.rds')
+as.data.frame(wvs_full)
+
+### Trimming dataset to the variables of analysis
+# V2 = country
+# V3 = unique ID for interview
+# V248 = level of education
+# V240 = gender
+# V242 = age
+# V238 = Income/class (self-reported)
+
+# V106 = trust of people of other religions 
+# V107 = trust of people of other nationalities
+
+# V101 = 'grow the pie' vs 'divide the pie'
+# V99 = Competition good or harmful
+# V98 = The state should make incomes more equal
+# V96 = Incomes should be more equal
+
+variables_interest <- c('V2', 'V3', 'V248', 'V240', 'V242', 'V238', 'V106', 'V107', 'V101', 'V99', 'V98', 'V96')
+wvs1 <- wvs_full[variables_interest]
+#View(wvs1)
+dim(wvs1)
+
+### assigning GINI coefficients and per capita GDP from World Bank figures
+
+wvs1$GINI <- ifelse(wvs1$V2 == '156', 42.06, ifelse(wvs1$V2 == '752', 26.81, 40.46))
+wvs1$percap <- ifelse(wvs1$V2 == '156', 4.51494, ifelse(wvs1$V2 == '752', 52.07643, 48.37405))
+
+
+#### select countries to analyze
+countries_interest <- c('156', '752', '840')  # China, Sweden, United States
+wvs_csu <- wvs1[wvs1$V2 %in% countries_interest,]
+#View(wvs2) 
+
+
+usa_id <- '840'  
+usa <- wvs1[wvs1$V2 %in% usa_id,]
+dim(usa)
+
+china_id <- '156'
+china <- wvs1[wvs1$V2 %in% china_id,]
+dim(china)
+
+sweden_id <- '752'  
+sweden <- wvs1[wvs1$V2 %in% sweden_id,]
+dim(sweden)
+
+
+
+
+
+
+```
+
+
+
+```{r}
+### Summary statistics
+
+mean(wvs1$V96, na.rm = TRUE)
+sd(wvs1$V96, na.rm = TRUE)
+mean(china$V96, na.rm = TRUE)
+sd(china$V96, na.rm = TRUE)
+mean(sweden$V96, na.rm = TRUE)
+sd(sweden$V96, na.rm = TRUE)
+mean(usa$V96, na.rm = TRUE)
+sd(usa$V96, na.rm = TRUE)
+
+mean(wvs1$V98, na.rm = TRUE)
+sd(wvs1$V98, na.rm = TRUE)
+mean(china$V98, na.rm = TRUE)
+sd(china$V98, na.rm = TRUE)
+mean(sweden$V98, na.rm = TRUE)
+sd(sweden$V98, na.rm = TRUE)
+mean(usa$V98, na.rm = TRUE)
+sd(usa$V98, na.rm = TRUE)
+
+mean(wvs1$V99, na.rm = TRUE)
+sd(wvs1$V99, na.rm = TRUE)
+mean(china$V99, na.rm = TRUE)
+sd(china$V99, na.rm = TRUE)
+mean(sweden$V99, na.rm = TRUE)
+sd(sweden$V99, na.rm = TRUE)
+mean(usa$V99, na.rm = TRUE)
+sd(usa$V99, na.rm = TRUE)
+
+
+mean(wvs1$V101, na.rm = TRUE)
+sd(wvs1$V101, na.rm = TRUE)
+mean(china$V101, na.rm = TRUE)
+sd(china$V101, na.rm = TRUE)
+mean(sweden$V101, na.rm = TRUE)
+sd(sweden$V101, na.rm = TRUE)
+mean(usa$V101, na.rm = TRUE)
+sd(usa$V101, na.rm = TRUE)
+
+mean(wvs1$V248, na.rm = TRUE)
+sd(wvs1$V248, na.rm = TRUE)
+mean(china$V248, na.rm = TRUE)
+sd(china$V248, na.rm = TRUE)
+mean(sweden$V248, na.rm = TRUE)
+sd(sweden$V248, na.rm = TRUE)
+mean(usa$V248, na.rm = TRUE)
+sd(usa$V248, na.rm = TRUE)
+
+mean(wvs1$V240, na.rm = TRUE)
+sd(wvs1$V240, na.rm = TRUE)
+mean(china$V240, na.rm = TRUE)
+sd(china$V240, na.rm = TRUE)
+mean(sweden$V240, na.rm = TRUE)
+sd(sweden$V240, na.rm = TRUE)
+mean(usa$V240, na.rm = TRUE)
+sd(usa$V240, na.rm = TRUE)
+
+mean(wvs1$V242, na.rm = TRUE)
+sd(wvs1$V242, na.rm = TRUE)
+mean(china$V242, na.rm = TRUE)
+sd(china$V242, na.rm = TRUE)
+mean(sweden$V242, na.rm = TRUE)
+sd(sweden$V242, na.rm = TRUE)
+mean(usa$V242, na.rm = TRUE)
+sd(usa$V242, na.rm = TRUE)
+
+mean(wvs1$V238, na.rm = TRUE)
+sd(wvs1$V238, na.rm = TRUE)
+mean(china$V238, na.rm = TRUE)
+sd(china$V238, na.rm = TRUE)
+mean(sweden$V238, na.rm = TRUE)
+sd(sweden$V238, na.rm = TRUE)
+mean(usa$V238, na.rm = TRUE)
+sd(usa$V238, na.rm = TRUE)
+
+mean(wvs1$V106, na.rm = TRUE)
+sd(wvs1$V106, na.rm = TRUE)
+mean(china$V106, na.rm = TRUE)
+sd(china$V106, na.rm = TRUE)
+mean(sweden$V106, na.rm = TRUE)
+sd(sweden$V106, na.rm = TRUE)
+mean(usa$V106, na.rm = TRUE)
+sd(usa$V106, na.rm = TRUE)
+
+mean(wvs1$V107, na.rm = TRUE)
+sd(wvs1$V107, na.rm = TRUE)
+mean(china$V107, na.rm = TRUE)
+sd(china$V107, na.rm = TRUE)
+mean(sweden$V107, na.rm = TRUE)
+sd(sweden$V107, na.rm = TRUE)
+mean(usa$V107, na.rm = TRUE)
+sd(usa$V107, na.rm = TRUE)
+
+```
+### Run Regressions
+
+```{r}
+#### Regressions on V96
+v96_n <- lm(data = wvs_csu, V96 ~ GINI + percap) # national stats
+v96_c <-  lm(data = wvs_csu, V96 ~ as.factor(V2)) # countries (only)
+v96_t <-  lm(data = wvs_csu, V96 ~ as.factor(V2) + V107) # countries and trust
+v96_i <-  lm(data = wvs_csu, V96 ~ as.factor(V2) + V238) # countries and income
+v96_all <-  lm(data = wvs_csu, V96 ~ as.factor(V2) + V107 + V238 + V240 + V242 + V248) # countries and income
+
+#### Regressions on V98
+v98_n <- lm(data = wvs_csu, V98 ~ GINI + percap)
+v98_c <-  lm(data = wvs_csu, V98 ~ as.factor(V2)) # countries (only)
+v98_t <-  lm(data = wvs_csu, V98 ~ as.factor(V2) + V107) # countries and trust
+v98_i <-  lm(data = wvs_csu, V98 ~ as.factor(V2) + V238) # countries and income
+v98_all <-  lm(data = wvs_csu, V98 ~ as.factor(V2) + V107 + V238 + V240 + V242 + V248) # countries and income
+
+
+#### Regressions on V99
+v99_n <- lm(data = wvs_csu, V99 ~ GINI + percap)
+v99_c <-  lm(data = wvs_csu, V99 ~ as.factor(V2)) # countries (only)
+v99_t <-  lm(data = wvs_csu, V99 ~ as.factor(V2) + V107) # countries and trust
+v99_i <-  lm(data = wvs_csu, V99 ~ as.factor(V2) + V238) # countries and income
+v99_all <-  lm(data = wvs_csu, V99 ~ as.factor(V2) + V107 + V238 + V240 + V242 + V248) # countries and income
+
+
+#### Regressions on 101
+v101_n <- lm(data = wvs_csu, V101 ~ GINI + percap)
+v101_c <-  lm(data = wvs_csu, V101 ~ as.factor(V2)) # countries (only)
+v101_t <-  lm(data = wvs_csu, V101 ~ as.factor(V2) + V107) # countries and trust
+v101_i <-  lm(data = wvs_csu, V101 ~ as.factor(V2) + V238) # countries and income
+v101_all <-  lm(data = wvs_csu, V101 ~ as.factor(V2) + V107 + V238 + V240 + V242 + V248) # countries and income
+
+
+```
+
+
